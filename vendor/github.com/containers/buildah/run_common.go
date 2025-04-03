@@ -614,18 +614,6 @@ func runUsingRuntime(options RunOptions, configureNetwork bool, moreCreateArgs [
 		return 1, fmt.Errorf("parsing pid %s as a number: %w", string(pidValue), err)
 	}
 	var stopped uint32
-	var reaping sync.WaitGroup
-	reaping.Add(1)
-	go func() {
-		defer reaping.Done()
-		var err error
-		_, err = unix.Wait4(pid, &wstatus, 0, nil)
-		if err != nil {
-			wstatus = 0
-			options.Logger.Errorf("error waiting for container child process %d: %v\n", pid, err)
-		}
-		atomic.StoreUint32(&stopped, 1)
-	}()
 
 	if configureNetwork {
 		if _, err := containerCreateW.Write([]byte{1}); err != nil {
@@ -723,8 +711,28 @@ func runUsingRuntime(options RunOptions, configureNetwork bool, moreCreateArgs [
 	unix.Close(finishCopy[1])
 	// Wait for the stdio copy goroutine to flush.
 	stdio.Wait()
-	// Wait until we finish reading the exit status.
-	reaping.Wait()
+
+	// Read the exit status, then reap all leftover child processes
+	var werr error
+	_, werr = unix.Wait4(pid, &wstatus, 0, nil)
+	if werr != nil {
+		wstatus = 0
+		options.Logger.Errorf("error waiting for container child process %d: %v\n", pid, werr)
+	}
+
+	for {
+		var xwstatus unix.WaitStatus
+		var x, xerr = unix.Wait4(0, &xwstatus, 0, nil)
+		if xerr == syscall.ECHILD {
+			break
+		}
+		options.Logger.Debugf("Reaped extra child process: ret %d, status %d", x, xwstatus)
+		if xerr != nil {
+			options.Logger.Errorf("error waiting for extra child process %v\n", xerr)
+		}
+	}
+
+	atomic.StoreUint32(&stopped, 1)
 
 	return wstatus, nil
 }
