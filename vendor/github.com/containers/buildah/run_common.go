@@ -722,7 +722,7 @@ func runUsingRuntime(options RunOptions, configureNetwork bool, moreCreateArgs [
 
 	for {
 		var xwstatus unix.WaitStatus
-		var x, xerr = unix.Wait4(0, &xwstatus, 0, nil)
+		var x, xerr = unix.Wait4(-1, &xwstatus, 0, nil)
 		if xerr == syscall.ECHILD {
 			break
 		}
